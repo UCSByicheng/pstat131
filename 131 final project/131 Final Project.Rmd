@@ -1,0 +1,419 @@
+---
+title: "Machine Learning Model For Fetal Health Prediction"
+author: "name"
+date: "2022/12/09"
+output:
+  html_document:
+    theme: paper
+    highlight: tango
+    code_folding: hide
+---
+## Introduction  
+
+With the development of obstetric technology, especially the fetal safety monitoring technology, more and more attention is paid to the attention and treatment of the fetus. This is different from the past. In the past, due to technical limitations, obstetrics mainly focused on the mother, and must ensure the safety of the mother. The fetus must be considered as the second priority. Now, of course, the safety of the mother is equally important, but at the same time when considering the safety of the mother (note that it is also not the second priority), it is also considered how to do something beneficial to the fetus.  
+Cardiotocograms (CTGs) are a simple and cost accessible option to assess fetal health, allowing healthcare professionals to take action in order to prevent child and maternal mortality. The equipment itself works by sending ultrasound pulses and reading its response, thus shedding light on fetal heart rate (FHR), fetal movements, uterine contractions and more.  
+We use exploratory data analysis and machine learning algorithms to study which CTGs indicators during pregnancy are related to the health of the fetus, and predict whether the fetus is healthy according to these indicators, so that people can take medical measures in advance to improve the health rate of the fetus.  
+
+## Loading Data and Packages  
+
+The data set contains 2126 records of features extracted from cardiotocogram exams. The dependent variable is fetal health, including normal(value=1), suspect(value=2) and pathological(value=3).The independent variable has 21 variables, recorded features extracted from cardiotocogram exams.  
+The data for this project comes from the kaggle competition platform see https://www.kaggle.com/datasets/andrewmvd/fetal-health-classification?datasetId=916586&language=R&select=fetal_health.csv  
+The variables for the data set are as following:  
+baseline_value: Baseline Fetal Heart Rate (FHR)  
+accelerations: Number of accelerations per second  
+fetal_movement: Number of fetal movements per second  
+uterine_contractions: uterine_contractions  
+light_decelerations:  Number of LDs per second  
+severe_decelerations: Number of SDs per second  
+prolongued_decelerations: Number of PDs per second  
+abnormal_short_term_variability: Percentage of time with abnormal short term variability  
+mean_value_of_short_term_variability: Mean value of short term variability  
+percentage_of_time_with_abnormal_long_term_variability: Percentage of time with abnormal long term variability  
+mean_value_of_long_term_variability: Mean value of long term variability  
+histogram_width: Width of the histogram made using all values from a record  
+histogram_min: Histogram minimum value  
+histogram_max: Histogram maximum value  
+histogram_number_of_peaks: Number of peaks in the exam histogram  
+histogram_number_of_zeroes: Number of zeroes in the exam histogram  
+histogram_mode: Hist mode  
+histogram_mean: Hist mean  
+histogram_median: Hist Median  
+histogram_variance: Hist variance  
+histogram_tendency: Histogram trend  
+fetal_health: 1-Normal, 2 - Suspect, 3 - Pathological  
+
+```{r Loading Data and Packages, message=FALSE, warning=FALSE, results="hide"}
+library(tidyverse) 
+library(tidymodels) 
+library(corrplot) 
+library(caret)
+library(janitor)
+library(skimr)
+library(klaR)
+library(MASS)
+library(installr)
+library(kernlab)
+library(patchwork)
+library(lubridate)
+library(ranger)
+library(rlang)
+library(ggplot2)
+library(corrr)
+library(kknn)
+tidymodels_prefer()
+setwd('C:/Users/DELL/Desktop/131/final project/1130Rmodel')
+fetal <- read_csv("fetal_health.csv")
+#View(fetal)
+```
+
+## Data Cleaning  
+
+### Clean names  
+
+Standardize the format of column names using clean_names (), mainly replace the space of column name with '_'.  
+
+```{r, message=FALSE, warning=FALSE}
+fetal_ori <- fetal
+fetal <- fetal %>% clean_names()
+head(fetal)
+```
+
+### checking missing values  
+  
+We confirmed that none of the variables have missing values.  
+
+```{r check missing values, message=FALSE, warning=FALSE}
+apply(is.na(fetal), 2, sum) 
+```
+
+### Convert to factor  
+
+The target variable fetal_health is numerical, so we need to convert it into a factor variable.  
+
+```{r, message=FALSE, warning=FALSE, results="hide"}
+str(fetal)
+fetal$fetal_health = as.factor(fetal$fetal_health)
+```  
+
+## Exploratory Data Analysis  
+
+###  Distribution of fetal health  
+
+We first drew the distribution plot of our prediction variable (fetal health), and the data showed that most of the fetuses were normal (fatal_health=1), and the number of fetuses with suspect diseases (fatal_health=2) was slightly higher than the number of pathological fetuses(fatal_health=3).  
+
+```{r, message=FALSE, warning=FALSE, results="hide"}
+theme <- theme(plot.title = element_text(hjust = 0.3, face = "bold"))
+
+fetal%>%
+  ggplot(aes(x = fetal_health, 
+             y = stat(count), fill = fetal_health,
+             label = scales::comma(stat(count)))) +
+  geom_bar(position = "dodge") + 
+  geom_text(stat = 'count',
+            position = position_dodge(.9), 
+            vjust = -0.5, 
+            size = 3) + 
+  scale_y_continuous(labels = scales::comma)+
+  labs(x = 'fetal health', y = 'Count') +
+  ggtitle("Distribution of fetal health") +
+  theme
+```  
+
+###  correlation between  
+
+We plotted the correlation coefficient matrix between each variable and extracted the correlation coefficient values between each independent variable and the target variable (fetal_health). The results show that number of PDs per second (prolongued_decelerations) has the greatest correlation with fetal_health, the correlation coefficient was 0.48, followed by percentage of time with abnormal short term variability (abnormal_short_term_variability), the correlation coefficient with fetal_health is 0.47.At the same time, each independent variable has different degrees of correlation.  
+
+```{r}
+fetal_cor <- cor(fetal_ori)  # calculating the correlation between each variable
+cor_plt <- corrplot(fetal_cor, tl.cex = 0.5,number.cex = 0.3,method = "number",col = COL2("PiYG")) 
+fetal_cor[,"fetal_health"]
+```
+
+###  fetal health vs baseline_value  
+
+To explore the relationship between fetal health and Baseline Fetal Heart Rate, we divided the Baseline Fetal Heart Rate (baseline_value) into 10 intervals, and graphed the proportion of fetal health in each interval. The results show that the proportion of fetal state of the Baseline Fetal Heart Rate in different intervals is different, especially when the Baseline Fetal Heart Rate is greater than 136, the proportion of the suspected fetal pathologies (fetal health=2) increases greatly.  
+
+```{r, message=FALSE, warning=FALSE}
+probs = seq(0,1,0.1)
+qq = unique(quantile(fetal$baseline_value,probs))
+plot(cut(fetal$baseline_value, qq, include_lowest=TRUE), fetal$fetal_health
+         , main='fetal health vs baseline_value',fill=fetal$fetal_health
+         ,xlab='Baseline Fetal Heart Rate',ylab='fetal health')
+    
+```
+  
+###  Distribution of the fetal health by histogram_tendency
+
+The distribution of the fetal health in different histogram_tendency is different, and the proportion of the pathological fetuses (fetal_health = 3) gradually decreases as the histogram_tendency value increases.  
+
+```{r, message=FALSE, warning=FALSE}
+fetal %>%
+  ggplot(aes(x = fetal_health, 
+           y = stat(count), fill = fetal_health)) +
+  geom_bar( ) +
+  facet_wrap(~histogram_tendency, scales = "free_y") +
+  labs(
+    title = "Distribution of the fetal health by histogram_tendency"
+  )+
+  theme
+```  
+
+
+### Boxplot of Number of PDs per second by fetal health  
+
+It is obvious that the number of PDs per second of pathological fetus is higher than that of other fetus, and the number of PDs per second of normal fetus and suspicious pathological fetus is mostly 0.  
+
+```{r, message=FALSE, warning=FALSE, results="hide"}
+fetal %>%
+  ggplot(aes(x = fetal_health, y = prolongued_decelerations,fill = fetal_health)) + 
+  geom_boxplot() + 
+  labs(x = 'fetal health', y = 'Number of PDs per second') +
+  ggtitle("Boxplot of Number of PDs per second by fetal health") +
+  theme
+```  
+
+## Setting Up Models  
+
+### Data Split
+
+The data set contains a total of 2126 samples,of which 70% of the data is used as training data about 1488 and 20% of the data is used as test data about 638 We use stratified sampling according to the fetal health.
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(321)
+dim(fetal) #2126   22
+split_data <-fetal %>% 
+  initial_split(fetal,prop = 0.7, strata = "fetal_health")
+fetal_train <- training(split_data)
+fetal_test <- testing(split_data)
+dim(fetal_train) # 1488   22
+dim(fetal_test)  #  638  22
+```  
+
+###  Building the Recipe
+
+It’s finally time to start setting up our models! We create our recipe, since all predictor variables are numerical types, we normalize all independent variables to have a standard deviation of one and a mean of zero.and establish 5 fold cross validation and repeated three times to compare each model.
+
+```{r, message=FALSE, warning=FALSE }
+fetal_folds <- vfold_cv(fetal_train, v = 5,repeats = 3) 
+recipe<-fetal_train %>%
+  recipe(fetal_health~.) %>%
+  step_normalize(all_predictors())
+recipe
+```  
+
+##  Model building  
+
+I decided to run cross fold validation on the following four models.  
+1.Logistic regression model 
+2.Decision tree model  
+3.Boost model  
+4.SVM model  
+
+###  Logistic Regression Model  
+
+I tuned penalty, set mode to "classification" (because my outcome is a factor variable), and used the LiblineaR engine.  
+
+```{r, message=FALSE, warning=FALSE, results="hide"  }
+log_model <- logistic_reg() %>% 
+  set_engine("LiblineaR")%>% 
+  set_mode('classification')%>%
+  set_args(penalty = tune())
+
+log_workflow <- workflow() %>% 
+  add_model(log_model) %>% 
+  add_recipe(recipe)
+
+log_grid <- tibble(penalty = 10^seq(-5, 0, length.out = 20))
+```
+
+Then, I executed my model by tuning and save model result. This process took 3 minutes, it is quickly.  
+
+```{r, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+log_tune_res <- log_workflow %>% 
+  tune_grid(resamples = fetal_folds,
+            grid = log_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+
+
+save(log_tune_res, log_workflow, file = "C:/Users/DELL/Desktop/131/final project/1130Rmodel/log_tune_res2.rda")
+```  
+
+Loading model tuning results.Through autoplot() function and show_ best() based on roc_auc metric gets the optimal value of the parameter.As penalty increases, the mean roc_auc is increased rapidly and drops rapidly after reaching the peak, and when penalty=0.16237767, mean roc_auc reaches a maximum value of 94.55%.
+
+```{r, message=FALSE, warning=FALSE  }
+load("C:/Users/DELL/Desktop/131/final project/1130Rmodel/log_tune_res2.rda")
+autoplot(log_tune_res, metric = "roc_auc")  
+show_best(log_tune_res, metric = "roc_auc") %>% dplyr::select(-.estimator, -.config) #0.16237767 0.9455037
+```
+
+###  Decision tree 
+
+I tuned cost_complexity, set mode to "classification", and used the rpart engine to build a decision tree model.
+
+```{r set svm model, message=FALSE, warning=FALSE, results="hide"  }
+tree_model<- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification") %>%
+  set_args(cost_complexity = tune()) 
+
+tree_workflow <- workflow() %>%
+  add_model(tree_model) %>%
+  add_recipe(recipe)
+
+tree_grid <- tibble(cost_complexity = 10^seq(-6, -1, length.out = 20))
+```
+
+Then, I executed my model by tuning and save model result. This process took 3 minutes, it is quickly.  
+
+```{r execute svm, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+tree_tune_res <- tune_grid(
+  tree_workflow,
+  resamples = fetal_folds,
+  grid = tree_grid,
+  metrics = metric_set(roc_auc)
+  )
+save(tree_tune_res, tree_workflow, file = "C:/Users/DELL/Desktop/131/final project/1130Rmodel/tree_tune_res2.rda")
+```
+
+Loading model tuning results.Through autoplot() function and show_ best() based on roc_auc metric gets the optimal value of the parameter.As cost complexity increases, the mean roc_auc basically remains unchanged and then drops rapidly, and when penalty=0.00001, mean roc_auc reaches a maximum value of 94.12%.  
+
+```{r, message=FALSE, warning=FALSE  }
+set.seed(321)
+load("C:/Users/DELL/Desktop/131/final project/1130Rmodel/tree_tune_res2.rda")
+autoplot(tree_tune_res, metric = "roc_auc")  
+show_best(tree_tune_res, metric = "roc_auc") %>% select(-.estimator, -.config) #cost=0.000001 mean=0.9412431		 
+```  
+
+###  Boost model
+
+I tuned learn_rate, set mode to "classification", and used the xgboost engine. 
+
+```{r set boost model, message=FALSE, warning=FALSE, results="hide"  }
+boost_model <- boost_tree() %>%
+  set_engine("xgboost") %>%
+  set_mode("classification") %>% 
+  set_args(learn_rate = tune())
+
+boost_workflow <- workflow() %>% 
+  add_model(boost_model) %>%
+  add_recipe(recipe)
+
+boost_grid <- tibble(learn_rate= 10^seq(-3, 0, length.out = 20))
+```  
+
+Then, I executed my model by tuning and save model result. This process took 3 minutes, it is quickly.  
+
+```{r, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+boost_tune_res <- tune_grid(
+  boost_workflow,
+  resamples = fetal_folds,
+  grid = boost_grid,
+  metrics = metric_set(roc_auc)
+  )
+save(boost_tune_res, boost_workflow, file = "C:/Users/DELL/Desktop/131/final project/1130Rmodel/boost_tune_res2.rda")
+```  
+
+Loading model tuning results.Through autoplot() function and show_ best() based on roc_auc metric gets the optimal value of the parameter.As learning rate increases, the mean roc_auc increases rapidly at first and then decreases slowly after reaching the peak, and when learning rate=0.3359818, mean roc_auc reaches a maximum value of 97.95%.  
+
+```{r, message=FALSE, warning=FALSE  }
+set.seed(321)
+load("C:/Users/DELL/Desktop/131/final project/1130Rmodel/boost_tune_res2.rda")
+autoplot(boost_tune_res, metric = "roc_auc")  ##
+show_best(boost_tune_res, metric = "roc_auc") %>% select(-.estimator, -.config)  #learn_rate=0.3359818 #0.9794887		
+```  
+
+###  SVM model 
+
+I tuned cost, set mode to "classification" and used the kernlab engine to bulid SVM model.  
+
+```{r set rf model, message=FALSE, warning=FALSE, results="hide"  }
+svm_model <- svm_rbf() %>%
+  set_engine("kernlab")%>%
+  set_mode('classification')%>% 
+  set_args(cost  = tune())
+
+svm_workflow <- workflow() %>% 
+  add_model(svm_model) %>% 
+  add_recipe(recipe)
+
+svm_grid <- tibble(cost = 10^seq(-3, 3, length.out = 20))
+```
+
+Then, I executed my model by tuning and save result. This process took 7 minutes, it is quickly.  
+
+```{r execute rf, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+set.seed(321)
+svm_tune_res <- svm_workflow %>% 
+  tune_grid(resamples = fetal_folds,
+            grid = svm_grid
+           )
+save(svm_tune_res, svm_workflow, file = "C:/Users/DELL/Desktop/131/final project/1130Rmodel/svm_tune_res2.rda")
+```
+
+Loading model tuning results. Through autoplot() function and show_ best() based on roc_auc metric gets the optimal value of the parameter. Overall, as cost increases, the mean roc_auc increases rapidly and then decreases slowly after reaching the peak, and when cost=26.366509, mean roc_auc reaches a maximum value of 96.41%.  
+
+```{r show rf, message=FALSE, warning=FALSE  }
+set.seed(321)
+load("C:/Users/DELL/Desktop/131/final project/1130Rmodel/svm_tune_res2.rda")
+autoplot(svm_tune_res, metric = "roc_auc")  
+show_best(svm_tune_res, metric = "roc_auc") %>% select(-.estimator, -.config) #26.366509  0.9641530
+```
+
+##  Final Model Building  
+
+By comparing the mean roc_auc maximum of the four models, boost model performs best, its mean roc_auc value is the highest, close to 97.95%.Therefore, we choose the tuned boost model as our final model.
+
+```{r}
+mean_roc_auc <- c(0.9455, 0.9412, 0.9795,0.9641)
+models <- c("Logistic regression model", "Decision tree model", "Boosted tree model","SVM model")
+results <- tibble(mean_roc_auc = mean_roc_auc, models = models)
+
+results %>%
+  arrange(-mean_roc_auc)
+```
+
+We’ll create a workflow that has tuned and finalize the workflow by taking the parameters from the boost model using the select_best() function. Then fit optimal boost model to training set.  
+
+```{r rf final model, message=FALSE, warning=FALSE }
+set.seed(321)
+boost_workflow_tuned <- boost_workflow %>% 
+  finalize_workflow(select_best(boost_tune_res, metric = "roc_auc"))
+boost_final <- fit(boost_workflow_tuned, fetal_train)
+```  
+
+## Analysis of The Test Set  
+
+Let's fit the final boost model with the test data set, calculate the accuracy and draw the confusion matrix and roc curve.  
+The results show that the model performs well on the test set, with an accuracy rate of 95.45%. Through the confusion matrix, we observed that the prediction accuracy of normal fetus(y=1) and pathological fetus(y=3) is very high, but the prediction effect of suspicious pathological fetus(y=2) is not good.  
+
+```{r traing rf model, message=FALSE, warning=FALSE  }
+set.seed(321)
+#calculate accuracy
+boost_acc <- augment(boost_final, new_data = fetal_test) %>%
+  accuracy(truth = fetal_health, estimate = .pred_class)
+boost_acc
+##confusion matrix
+augment(boost_final, new_data = fetal_test) %>%
+  conf_mat(truth = fetal_health, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+```  
+
+Let's take a quick look at the ROC curve, which looks great, because we want the curve to follow the trajectory of up and left as much as possible. Auc value is 98.98%.
+
+```{r}
+#roc_curve
+augment(boost_final, new_data = fetal_test) %>%
+  roc_curve(fetal_health, .pred_1:.pred_3) %>%
+  autoplot()
+
+final_roc_auc <- augment(boost_final, new_data = fetal_test) %>%
+  roc_auc(fetal_health, estimate = .pred_1:.pred_3) %>%
+  select(.estimate)  # computing the AUC for the ROC curve
+
+final_roc_auc
+```
+
+## Conclusion  
+
+In this paper, four machine learning models, namely, logistic regression, decision tree, boost and SVM, are selected to predict the health of the fetus through the relevant indicators of CTGs We use the five fold cross validation method to compare the auc values of the four models after tuning the parameters. The boost model has the best effect, with the average auc value reaching 97.95%. Then we use the optimized boost model as our final model and fit the training set and test set. The model performs well on the test set, with the accuracy rate of 95.45% and AUC value of 98.98%. The only disadvantage is that we may be able to further optimize the fetal prediction for suspicious pathology.
